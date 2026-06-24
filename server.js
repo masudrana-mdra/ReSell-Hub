@@ -38,6 +38,24 @@ app.use('/api/users', userRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/contact', rateLimiter({ max: 5 }), contactRoutes);
 
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  const dbStatus = mongoose.connection.readyState === 1 ? 'connected' : 'disconnected';
+  const memoryUsage = process.memoryUsage();
+  res.json({
+    success: true,
+    status: 'Healthy',
+    database: dbStatus,
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    memory: {
+      rss: `${Math.round(memoryUsage.rss / 1024 / 1024 * 100) / 100} MB`,
+      heapTotal: `${Math.round(memoryUsage.heapTotal / 1024 / 1024 * 100) / 100} MB`,
+      heapUsed: `${Math.round(memoryUsage.heapUsed / 1024 / 1024 * 100) / 100} MB`
+    }
+  });
+});
+
 // Root Route
 app.get('/', (req, res) => {
   res.json({
