@@ -62,14 +62,33 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 5000;
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/resell_hub';
 
-mongoose.connect(MONGODB_URI)
-  .then(() => {
-    console.log('MongoDB connected successfully');
-    app.listen(PORT, () => {
-      console.log(`Server is running on port ${PORT}`);
+// MongoDB Connection options
+const mongooseOptions = {
+  maxPoolSize: 10, // Maintain up to 10 socket connections
+  serverSelectionTimeoutMS: 5000, // Keep trying to send operations for 5 seconds
+  socketTimeoutMS: 45000, // Close sockets after 45 seconds of inactivity
+  family: 4 // Use IPv4, skip trying IPv6
+};
+
+const connectWithRetry = (retryCount = 0) => {
+  const maxRetries = 5;
+  mongoose.connect(MONGODB_URI, mongooseOptions)
+    .then(() => {
+      console.log('MongoDB connected successfully to ReSell Hub database');
+      app.listen(PORT, () => {
+        console.log(`Server is running on port ${PORT}`);
+      });
+    })
+    .catch((err) => {
+      console.error(`MongoDB connection error (Attempt ${retryCount + 1}/${maxRetries}):`, err.message);
+      if (retryCount < maxRetries - 1) {
+        console.log('Retrying MongoDB connection in 5 seconds...');
+        setTimeout(() => connectWithRetry(retryCount + 1), 5000);
+      } else {
+        console.error('Max MongoDB connection retries reached. Exiting process.');
+        process.exit(1);
+      }
     });
-  })
-  .catch((err) => {
-    console.error('MongoDB connection error:', err.message);
-    process.exit(1);
-  });
+};
+
+connectWithRetry();
