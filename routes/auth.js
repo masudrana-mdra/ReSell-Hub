@@ -39,6 +39,23 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Passwords do not match' });
     }
 
+    // Validate email domain format
+    const emailRegex = /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/;
+    if (!emailRegex.test(email.trim())) {
+      return res.status(400).json({ success: false, message: 'Please provide a valid email address structure' });
+    }
+
+    // Validate phone number if provided
+    if (phone) {
+      const phoneRegex = /^(\+8801|8801|01)[3-9]\d{8}$/;
+      if (!phoneRegex.test(phone.trim())) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Please provide a valid Bangladesh phone number (e.g. 017XXXXXXXX)' 
+        });
+      }
+    }
+
     // Check existing user
     let user = await User.findOne({ email: email.toLowerCase() });
     if (user) {
