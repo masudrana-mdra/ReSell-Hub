@@ -10,18 +10,30 @@ const { protect, authorize } = require('../middleware/auth');
 // @desc    Get dashboard metrics & chart data for admin
 router.get('/admin', protect, authorize('admin'), async (req, res) => {
   try {
-    const totalUsers = await User.countDocuments();
-    const totalBuyers = await User.countDocuments({ role: 'buyer' });
-    const totalSellers = await User.countDocuments({ role: 'seller' });
-    const totalProducts = await Product.countDocuments();
-    const pendingProducts = await Product.countDocuments({ status: 'pending' });
-    const approvedProducts = await Product.countDocuments({ status: 'available' });
-    const rejectedProducts = await Product.countDocuments({ status: 'rejected' });
-    const totalOrders = await Order.countDocuments();
+    const { startDate, endDate } = req.query;
+    const dateQuery = {};
+    if (startDate || endDate) {
+      dateQuery.createdAt = {};
+      if (startDate) dateQuery.createdAt.$gte = new Date(startDate);
+      if (endDate) dateQuery.createdAt.$lte = new Date(endDate);
+    }
+
+    const totalUsers = await User.countDocuments(dateQuery);
+    const totalBuyers = await User.countDocuments({ role: 'buyer', ...dateQuery });
+    const totalSellers = await User.countDocuments({ role: 'seller', ...dateQuery });
+    const totalProducts = await Product.countDocuments(dateQuery);
+    const pendingProducts = await Product.countDocuments({ status: 'pending', ...dateQuery });
+    const approvedProducts = await Product.countDocuments({ status: 'available', ...dateQuery });
+    const rejectedProducts = await Product.countDocuments({ status: 'rejected', ...dateQuery });
+    const totalOrders = await Order.countDocuments(dateQuery);
     
     // Revenue aggregation
+    const matchStage = { paymentStatus: 'paid', orderStatus: { $ne: 'cancelled' } };
+    if (dateQuery.createdAt) {
+      matchStage.createdAt = dateQuery.createdAt;
+    }
     const revenueData = await Order.aggregate([
-      { $match: { paymentStatus: 'paid', orderStatus: { $ne: 'cancelled' } } },
+      { $match: matchStage },
       { $group: { _id: null, total: { $sum: '$totalAmount' } } }
     ]);
     const totalRevenue = revenueData.length > 0 ? revenueData[0].total : 0;
@@ -116,15 +128,26 @@ router.get('/admin', protect, authorize('admin'), async (req, res) => {
 router.get('/seller', protect, authorize('seller'), async (req, res) => {
   try {
     const userId = req.user._id;
+    const { startDate, endDate } = req.query;
+    const dateQuery = {};
+    if (startDate || endDate) {
+      dateQuery.createdAt = {};
+      if (startDate) dateQuery.createdAt.$gte = new Date(startDate);
+      if (endDate) dateQuery.createdAt.$lte = new Date(endDate);
+    }
 
-    const totalProducts = await Product.countDocuments({ 'sellerInfo.userId': userId });
-    const pendingOrders = await Order.countDocuments({ 'sellerInfo.userId': userId, orderStatus: 'pending' });
-    const deliveredOrders = await Order.countDocuments({ 'sellerInfo.userId': userId, orderStatus: 'delivered' });
-    const totalSales = await Order.countDocuments({ 'sellerInfo.userId': userId, paymentStatus: 'paid', orderStatus: { $ne: 'cancelled' } });
-    const lowStockProducts = await Product.countDocuments({ 'sellerInfo.userId': userId, status: 'available', stock: { $lte: 2 } });
+    const totalProducts = await Product.countDocuments({ 'sellerInfo.userId': userId, ...dateQuery });
+    const pendingOrders = await Order.countDocuments({ 'sellerInfo.userId': userId, orderStatus: 'pending', ...dateQuery });
+    const deliveredOrders = await Order.countDocuments({ 'sellerInfo.userId': userId, orderStatus: 'delivered', ...dateQuery });
+    const totalSales = await Order.countDocuments({ 'sellerInfo.userId': userId, paymentStatus: 'paid', orderStatus: { $ne: 'cancelled' }, ...dateQuery });
+    const lowStockProducts = await Product.countDocuments({ 'sellerInfo.userId': userId, status: 'available', stock: { $lte: 2 }, ...dateQuery });
 
+    const matchStage = { 'sellerInfo.userId': userId, paymentStatus: 'paid', orderStatus: { $ne: 'cancelled' } };
+    if (dateQuery.createdAt) {
+      matchStage.createdAt = dateQuery.createdAt;
+    }
     const revenueData = await Order.aggregate([
-      { $match: { 'sellerInfo.userId': userId, paymentStatus: 'paid', orderStatus: { $ne: 'cancelled' } } },
+      { $match: matchStage },
       { $group: { _id: null, total: { $sum: '$totalAmount' } } }
     ]);
     const totalRevenue = revenueData.length > 0 ? revenueData[0].total : 0;
