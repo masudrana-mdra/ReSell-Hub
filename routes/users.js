@@ -236,8 +236,10 @@ router.delete('/:id', protect, authorize('admin'), async (req, res) => {
     }
 
     await User.findByIdAndDelete(req.params.id);
-    // Also clean up user's wishlist and reports
+    // Clean up user's wishlist
     await Wishlist.deleteMany({ userId: req.params.id });
+    // Cascade delete user's listed products to prevent orphan listings
+    await Product.deleteMany({ 'sellerInfo.userId': req.params.id });
 
     res.json({ success: true, message: 'User account deleted successfully' });
   } catch (error) {
