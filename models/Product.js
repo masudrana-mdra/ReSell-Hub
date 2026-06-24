@@ -6,6 +6,10 @@ const ProductSchema = new mongoose.Schema({
     required: true,
     trim: true
   },
+  slug: {
+    type: String,
+    trim: true
+  },
   description: {
     type: String,
     required: true
@@ -88,6 +92,14 @@ const ProductSchema = new mongoose.Schema({
 
 ProductSchema.pre('save', function(next) {
   this.updatedAt = Date.now();
+  if (this.isModified('title')) {
+    this.slug = this.title
+      .toLowerCase()
+      .trim()
+      .replace(/[^\w\s-]/g, '')
+      .replace(/[\s_-]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+  }
   next();
 });
 
