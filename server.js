@@ -13,10 +13,12 @@ const userRoutes = require('./routes/users');
 const analyticsRoutes = require('./routes/analytics');
 const contactRoutes = require('./routes/contact');
 const rateLimiter = require('./middleware/rateLimiter');
+const logger = require('./middleware/logger');
 
 const app = express();
 
 // Middleware
+app.use(logger);
 const clientUrl = process.env.CLIENT_URL || '*';
 app.use(cors({
   origin: clientUrl === '*' ? '*' : clientUrl.split(','),
