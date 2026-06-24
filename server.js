@@ -12,6 +12,7 @@ const paymentRoutes = require('./routes/payments');
 const userRoutes = require('./routes/users');
 const analyticsRoutes = require('./routes/analytics');
 const contactRoutes = require('./routes/contact');
+const rateLimiter = require('./middleware/rateLimiter');
 
 const app = express();
 
@@ -26,14 +27,14 @@ app.use(cors({
 app.use(express.json());
 
 // Register API Routes
-app.use('/api/auth', authRoutes);
+app.use('/api/auth', rateLimiter({ max: 15 }), authRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/analytics', analyticsRoutes);
-app.use('/api/contact', contactRoutes);
+app.use('/api/contact', rateLimiter({ max: 5 }), contactRoutes);
 
 // Root Route
 app.get('/', (req, res) => {
