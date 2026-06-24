@@ -103,4 +103,7 @@ ProductSchema.pre('save', function(next) {
   next();
 });
 
+// Index for fast text search on title and description
+ProductSchema.index({ title: 'text', description: 'text' });
+
 module.exports = mongoose.model('Product', ProductSchema);
