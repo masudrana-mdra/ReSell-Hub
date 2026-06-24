@@ -59,6 +59,18 @@ router.post('/log', protect, async (req, res) => {
       return res.status(404).json({ success: false, message: 'Associated order not found' });
     }
 
+    if (order.paymentStatus === 'paid') {
+      return res.status(400).json({ success: false, message: 'This order has already been paid for' });
+    }
+
+    // Verify payment amount matches order total price to prevent client side tampering
+    if (Math.abs(order.totalPrice - Number(amount)) > 0.01) {
+      return res.status(400).json({ 
+        success: false, 
+        message: `Payment amount mismatch. Expected: $${order.totalPrice}, Received: $${amount}` 
+      });
+    }
+
     const payment = new Payment({
       orderId,
       transactionId,
