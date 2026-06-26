@@ -64,10 +64,10 @@ router.post('/log', protect, async (req, res) => {
     }
 
     // Verify payment amount matches order total price to prevent client side tampering
-    if (Math.abs(order.totalPrice - Number(amount)) > 0.01) {
+    if (Math.abs(order.totalAmount - Number(amount)) > 0.01) {
       return res.status(400).json({ 
         success: false, 
-        message: `Payment amount mismatch. Expected: $${order.totalPrice}, Received: $${amount}` 
+        message: `Payment amount mismatch. Expected: $${order.totalAmount}, Received: $${amount}` 
       });
     }
 
@@ -76,7 +76,7 @@ router.post('/log', protect, async (req, res) => {
       transactionId,
       amount: Number(amount),
       buyerId: req.user._id,
-      paymentStatus: paymentStatus || 'success',
+      paymentStatus: 'pending', // Set to pending initially per workflow requirement
       paymentMethod: paymentMethod || 'stripe'
     });
 
@@ -84,7 +84,7 @@ router.post('/log', protect, async (req, res) => {
 
     // Ensure order reflects correct transaction details
     order.transactionId = transactionId;
-    order.paymentStatus = 'paid';
+    order.paymentStatus = 'pending'; // Set to pending initially
     await order.save();
 
     res.status(201).json({ success: true, payment, message: 'Payment logged successfully' });
@@ -132,6 +132,22 @@ router.get('/admin', protect, authorize('admin'), async (req, res) => {
   } catch (error) {
     console.error('Fetch admin transactions error:', error);
     res.status(500).json({ success: false, message: 'Server error fetching transaction history' });
+  }
+});
+
+// @route   DELETE /api/payments/admin/:id
+// @desc    Delete a payment record (Admin only)
+router.delete('/admin/:id', protect, authorize('admin'), async (req, res) => {
+  try {
+    const payment = await Payment.findById(req.params.id);
+    if (!payment) {
+      return res.status(404).json({ success: false, message: 'Payment record not found' });
+    }
+    await payment.deleteOne();
+    res.json({ success: true, message: 'Payment record deleted successfully' });
+  } catch (error) {
+    console.error('Delete payment error:', error);
+    res.status(500).json({ success: false, message: 'Server error deleting payment record' });
   }
 });
 

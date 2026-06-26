@@ -48,30 +48,57 @@ router.get('/admin', protect, authorize('admin'), async (req, res) => {
         const count = await Product.countDocuments({ category: cat.name });
         return {
           name: cat.name,
-          value: count || Math.floor(Math.random() * 20) + 5 // Ensure beautiful chart display
+          value: count
         };
       })
     );
 
-    // User growth (mock monthly + actual)
-    const userGrowth = [
-      { month: 'Jan', Users: Math.max(5, Math.floor(totalUsers * 0.4)) },
-      { month: 'Feb', Users: Math.max(10, Math.floor(totalUsers * 0.55)) },
-      { month: 'Mar', Users: Math.max(18, Math.floor(totalUsers * 0.7)) },
-      { month: 'Apr', Users: Math.max(25, Math.floor(totalUsers * 0.85)) },
-      { month: 'May', Users: Math.max(35, Math.floor(totalUsers * 0.95)) },
-      { month: 'Jun', Users: totalUsers || 42 }
-    ];
+    // Get last 6 months list
+    const months = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date();
+      d.setMonth(d.getMonth() - i);
+      months.push({
+        name: d.toLocaleString('default', { month: 'short' }),
+        year: d.getFullYear(),
+        monthNum: d.getMonth()
+      });
+    }
 
-    // Monthly Orders and Revenue Analytics (mock historical + actual)
-    const monthlyOrders = [
-      { month: 'Jan', Orders: 4, Revenue: 120 },
-      { month: 'Feb', Orders: 8, Revenue: 340 },
-      { month: 'Mar', Orders: 15, Revenue: 620 },
-      { month: 'Apr', Orders: 22, Revenue: 1100 },
-      { month: 'May', Orders: 31, Revenue: 1800 },
-      { month: 'Jun', Orders: totalOrders || 38, Revenue: totalRevenue || 2400 }
-    ];
+    // Dynamic User growth over last 6 months
+    const userGrowth = await Promise.all(months.map(async (m) => {
+      const endOfMonth = new Date(m.year, m.monthNum + 1, 0, 23, 59, 59, 999);
+      const count = await User.countDocuments({ createdAt: { $lte: endOfMonth } });
+      return { month: m.name, Users: count };
+    }));
+
+    // Dynamic Monthly Orders and Revenue
+    const monthlyOrders = await Promise.all(months.map(async (m) => {
+      const startOfMonth = new Date(m.year, m.monthNum, 1);
+      const endOfMonth = new Date(m.year, m.monthNum + 1, 0, 23, 59, 59, 999);
+      
+      const ordersCount = await Order.countDocuments({
+        createdAt: { $gte: startOfMonth, $lte: endOfMonth }
+      });
+      
+      const monthlyRevData = await Order.aggregate([
+        { 
+          $match: { 
+            paymentStatus: 'paid', 
+            orderStatus: { $ne: 'cancelled' },
+            createdAt: { $gte: startOfMonth, $lte: endOfMonth }
+          } 
+        },
+        { $group: { _id: null, total: { $sum: '$totalAmount' } } }
+      ]);
+      const revenue = monthlyRevData.length > 0 ? monthlyRevData[0].total : 0;
+      
+      return {
+        month: m.name,
+        Orders: ordersCount,
+        Revenue: revenue
+      };
+    }));
 
     // Top Categories
     const topCategories = categories.map(cat => ({
@@ -79,20 +106,36 @@ router.get('/admin', protect, authorize('admin'), async (req, res) => {
       count: cat.productCount || 0
     })).sort((a, b) => b.count - a.count).slice(0, 5);
 
-    // Top Selling Products (mock or aggregated)
-    const allProducts = await Product.find({ status: 'available' }).limit(3);
-    let topSellingProducts = allProducts.map((p, idx) => ({
-      name: p.title,
-      sales: idx === 0 ? Math.max(2, totalOrders) : Math.max(1, Math.floor(totalOrders * 0.3)),
-      revenue: idx === 0 ? Math.max(p.price, Math.floor(totalRevenue * 0.4)) : Math.max(p.price, Math.floor(totalRevenue * 0.15))
+    // Top Selling Products dynamically aggregated
+    const topProductsAgg = await Order.aggregate([
+      { $match: { paymentStatus: 'paid', orderStatus: { $ne: 'cancelled' } } },
+      {
+        $group: {
+          _id: '$productId',
+          sales: { $sum: '$quantity' },
+          revenue: { $sum: '$totalAmount' }
+        }
+      },
+      { $sort: { sales: -1 } },
+      { $limit: 5 }
+    ]);
+    
+    let topSellingProducts = await Promise.all(topProductsAgg.map(async (item) => {
+      const prod = await Product.findById(item._id);
+      return {
+        name: prod ? prod.title : 'Deleted Product',
+        sales: item.sales,
+        revenue: item.revenue
+      };
     }));
 
     if (topSellingProducts.length === 0) {
-      topSellingProducts = [
-        { name: 'Vintage Leather Jacket', sales: 12, revenue: 540 },
-        { name: 'Mechanical Keyboard', sales: 8, revenue: 320 },
-        { name: 'Ergonomic Desk Chair', sales: 5, revenue: 750 }
-      ];
+      const activeProds = await Product.find({ status: 'available' }).limit(5);
+      topSellingProducts = activeProds.map(p => ({
+        name: p.title,
+        sales: 0,
+        revenue: 0
+      }));
     }
 
     res.json({
@@ -137,6 +180,8 @@ router.get('/seller', protect, authorize('seller'), async (req, res) => {
     }
 
     const totalProducts = await Product.countDocuments({ 'sellerInfo.userId': userId, ...dateQuery });
+    const activeProducts = await Product.countDocuments({ 'sellerInfo.userId': userId, status: 'available', stock: { $gt: 0 }, ...dateQuery });
+    const soldProducts = await Product.countDocuments({ 'sellerInfo.userId': userId, status: 'sold', ...dateQuery });
     const pendingOrders = await Order.countDocuments({ 'sellerInfo.userId': userId, orderStatus: 'pending', ...dateQuery });
     const deliveredOrders = await Order.countDocuments({ 'sellerInfo.userId': userId, orderStatus: 'delivered', ...dateQuery });
     const totalSales = await Order.countDocuments({ 'sellerInfo.userId': userId, paymentStatus: 'paid', orderStatus: { $ne: 'cancelled' }, ...dateQuery });
@@ -152,30 +197,89 @@ router.get('/seller', protect, authorize('seller'), async (req, res) => {
     ]);
     const totalRevenue = revenueData.length > 0 ? revenueData[0].total : 0;
 
-    // Monthly revenue & sales trend for this seller
-    const monthlyRevenue = [
-      { month: 'Jan', Revenue: Math.max(0, Math.floor(totalRevenue * 0.15)), Sales: Math.max(0, Math.floor(totalSales * 0.2)) },
-      { month: 'Feb', Revenue: Math.max(0, Math.floor(totalRevenue * 0.3)), Sales: Math.max(0, Math.floor(totalSales * 0.35)) },
-      { month: 'Mar', Revenue: Math.max(0, Math.floor(totalRevenue * 0.45)), Sales: Math.max(0, Math.floor(totalSales * 0.5)) },
-      { month: 'Apr', Revenue: Math.max(0, Math.floor(totalRevenue * 0.65)), Sales: Math.max(0, Math.floor(totalSales * 0.7)) },
-      { month: 'May', Revenue: Math.max(0, Math.floor(totalRevenue * 0.8)), Sales: Math.max(0, Math.floor(totalSales * 0.85)) },
-      { month: 'Jun', Revenue: totalRevenue || 0, Sales: totalSales || 0 }
-    ];
+    // Get last 6 months list
+    const months = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date();
+      d.setMonth(d.getMonth() - i);
+      months.push({
+        name: d.toLocaleString('default', { month: 'short' }),
+        year: d.getFullYear(),
+        monthNum: d.getMonth()
+      });
+    }
 
-    const salesTrend = [
-      { name: 'Week 1', Sales: Math.max(0, Math.floor(totalSales * 0.15)) },
-      { name: 'Week 2', Sales: Math.max(0, Math.floor(totalSales * 0.35)) },
-      { name: 'Week 3', Sales: Math.max(0, Math.floor(totalSales * 0.65)) },
-      { name: 'Week 4', Sales: totalSales || 0 }
-    ];
-
-    // Top Selling Products (mock or aggregated)
-    const sellerProducts = await Product.find({ 'sellerInfo.userId': userId });
-    const topSellingProducts = sellerProducts.slice(0, 3).map((p, idx) => ({
-      name: p.title,
-      sales: idx === 0 ? Math.max(2, totalSales) : Math.max(0, Math.floor(totalSales * 0.3)),
-      revenue: idx === 0 ? Math.max(p.price, totalRevenue) : Math.max(0, Math.floor(totalRevenue * 0.3))
+    // Dynamic Monthly revenue & sales trend for this seller
+    const monthlyRevenue = await Promise.all(months.map(async (m) => {
+      const startOfMonth = new Date(m.year, m.monthNum, 1);
+      const endOfMonth = new Date(m.year, m.monthNum + 1, 0, 23, 59, 59, 999);
+      
+      const salesCount = await Order.countDocuments({
+        'sellerInfo.userId': userId,
+        paymentStatus: 'paid',
+        orderStatus: { $ne: 'cancelled' },
+        createdAt: { $gte: startOfMonth, $lte: endOfMonth }
+      });
+      
+      const revData = await Order.aggregate([
+        {
+          $match: {
+            'sellerInfo.userId': userId,
+            paymentStatus: 'paid',
+            orderStatus: { $ne: 'cancelled' },
+            createdAt: { $gte: startOfMonth, $lte: endOfMonth }
+          }
+        },
+        { $group: { _id: null, total: { $sum: '$totalAmount' } } }
+      ]);
+      const revenue = revData.length > 0 ? revData[0].total : 0;
+      
+      return {
+        month: m.name,
+        Revenue: revenue,
+        Sales: salesCount
+      };
     }));
+
+    const salesTrend = monthlyRevenue; // Make it match monthlyRevenue so it has the same schema if referenced
+
+    // Top Selling Products dynamically aggregated
+    const sellerTopProductsAgg = await Order.aggregate([
+      { 
+        $match: { 
+          'sellerInfo.userId': userId,
+          paymentStatus: 'paid', 
+          orderStatus: { $ne: 'cancelled' } 
+        } 
+      },
+      {
+        $group: {
+          _id: '$productId',
+          sales: { $sum: '$quantity' },
+          revenue: { $sum: '$totalAmount' }
+        }
+      },
+      { $sort: { sales: -1 } },
+      { $limit: 5 }
+    ]);
+
+    let topSellingProducts = await Promise.all(sellerTopProductsAgg.map(async (item) => {
+      const prod = await Product.findById(item._id);
+      return {
+        name: prod ? prod.title : 'Deleted Product',
+        sales: item.sales,
+        revenue: item.revenue
+      };
+    }));
+
+    if (topSellingProducts.length === 0) {
+      const activeProds = await Product.find({ 'sellerInfo.userId': userId }).limit(5);
+      topSellingProducts = activeProds.map(p => ({
+        name: p.title,
+        sales: 0,
+        revenue: 0
+      }));
+    }
 
     // Recent products listed
     const recentProducts = await Product.find({ 'sellerInfo.userId': userId })
@@ -191,6 +295,8 @@ router.get('/seller', protect, authorize('seller'), async (req, res) => {
       success: true,
       metrics: {
         totalProducts,
+        activeProducts,
+        soldProducts,
         totalSales,
         totalRevenue,
         pendingOrders,

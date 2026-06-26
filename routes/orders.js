@@ -3,6 +3,7 @@ const router = express.Router();
 const Order = require('../models/Order');
 const Product = require('../models/Product');
 const Alert = require('../models/Alert');
+const Payment = require('../models/Payment');
 const { protect, authorize } = require('../middleware/auth');
 
 // @route   POST /api/orders
@@ -43,7 +44,7 @@ router.post('/', protect, async (req, res) => {
       productPrice: product.price,
       quantity,
       totalAmount,
-      paymentStatus: 'paid', // Order created after Stripe checkout
+      paymentStatus: 'pending', // Order created pending payment logging
       orderStatus: 'pending',
       transactionId
     });
@@ -150,8 +151,16 @@ router.patch('/:id/status', protect, async (req, res) => {
 
     order.orderStatus = status;
     
-    // If cancelled, return stock
+    // If status is accepted, set payment to success (paid)
+    if (status === 'accepted') {
+      order.paymentStatus = 'paid';
+      await Payment.findOneAndUpdate({ orderId: order._id }, { paymentStatus: 'success' });
+    }
+
+    // If cancelled, return stock and mark payment as failed
     if (status === 'cancelled') {
+      order.paymentStatus = 'refunded';
+      await Payment.findOneAndUpdate({ orderId: order._id }, { paymentStatus: 'failed' });
       const product = await Product.findById(order.productId);
       if (product) {
         product.stock += order.quantity;
@@ -190,6 +199,7 @@ router.patch('/:id/cancel', protect, async (req, res) => {
 
     order.orderStatus = 'cancelled';
     order.paymentStatus = 'refunded';
+    await Payment.findOneAndUpdate({ orderId: order._id }, { paymentStatus: 'failed' });
 
     // Put stock back
     const product = await Product.findById(order.productId);
@@ -206,6 +216,30 @@ router.patch('/:id/cancel', protect, async (req, res) => {
   } catch (error) {
     console.error('Cancel order error:', error);
     res.status(500).json({ success: false, message: 'Server error cancelling order' });
+  }
+});
+
+// @route   DELETE /api/orders/:id
+// @desc    Delete an order record (Sellers or Admin)
+router.delete('/:id', protect, async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id);
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+
+    const isSeller = order.sellerInfo.userId.toString() === req.user._id.toString();
+    const isAdmin = req.user.role === 'admin';
+
+    if (!isSeller && !isAdmin) {
+      return res.status(403).json({ success: false, message: 'Not authorized to delete this order' });
+    }
+
+    await order.deleteOne();
+    res.json({ success: true, message: 'Order record deleted successfully' });
+  } catch (error) {
+    console.error('Delete order error:', error);
+    res.status(500).json({ success: false, message: 'Server error deleting order' });
   }
 });
 
